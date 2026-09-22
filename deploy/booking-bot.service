@@ -1,0 +1,19 @@
+# Вариант без Docker: systemd.
+#   sudo cp deploy/booking-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now booking-bot
+#   journalctl -u booking-bot -f      # логи
+[Unit]
+Description=Telegram booking bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/opt/booking-bot
+EnvironmentFile=/opt/booking-bot/.env
+ExecStart=/opt/booking-bot/.venv/bin/python -m bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
