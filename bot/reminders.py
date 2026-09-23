@@ -18,6 +18,7 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 
+from . import demo
 from . import keyboards as kb
 from . import texts
 from .config import Settings
@@ -42,7 +43,7 @@ async def tick(bot: Bot, db: Database, settings: Settings, now: int) -> None:
             await bot.send_message(
                 b.user_id,
                 f"⌛ Бронь на {texts.when(b, settings.schedule.tz)} снята: оплата не поступила "
-                f"за {settings.payment_hold_min} минут. Время снова свободно — записаться: /book",
+                f"за {settings.payment_hold_min} минут. Время снова свободно, записаться: /book",
             )
         except TelegramAPIError as e:
             log.warning("Can't notify user %s about expired hold: %s", b.user_id, e)
@@ -62,15 +63,22 @@ async def tick(bot: Bot, db: Database, settings: Settings, now: int) -> None:
         await db.mark_reminded(b.id, now)
 
 
+async def step(bot: Bot, db: Database, settings: Settings, now: int) -> None:
+    """Один проход фонового цикла: в демо дописать демо-данные, затем брони и напоминания."""
+    if settings.demo_mode:
+        await demo.ensure_demo_data(db, settings, now)
+    await tick(bot, db, settings, now)
+
+
 async def run(bot: Bot, db: Database, settings: Settings) -> None:
     log.info("Background loop started: tick=%ss, remind %s min before",
              settings.tick_seconds, settings.remind_before_min)
     while True:
         try:
-            await tick(bot, db, settings, int(time.time()))
+            await step(bot, db, settings, int(time.time()))
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Упал тик (например, база заблокирована) — логируем и пробуем снова, цикл не умирает.
-            log.exception("Background tick failed, retry in %ss", settings.tick_seconds)
+            # Упал проход (например, база заблокирована): логируем и пробуем снова, цикл не умирает.
+            log.exception("Background step failed, retry in %ss", settings.tick_seconds)
         await asyncio.sleep(settings.tick_seconds)
