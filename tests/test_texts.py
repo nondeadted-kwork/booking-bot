@@ -4,7 +4,7 @@ import pathlib
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from bot import texts
+from bot import reminders, texts
 from bot.config import Settings
 from bot.db import Booking
 
@@ -79,3 +79,13 @@ def test_no_long_dashes_in_bot_texts():
                     and ("—" in node.value or "–" in node.value)):
                 found.append(f"{path.relative_to(BOT_DIR)}:{node.lineno}: {node.value[:60]!r}")
     assert not found, "\n".join(found)
+
+
+def test_reminder_names_the_day():
+    settings = Settings(bot_token="1:T", owner_ids=frozenset())
+    b = sample_booking()  # 24.09 10:00
+    same_day = int(datetime(2026, 9, 24, 9, 0, tzinfo=MSK).timestamp())
+    day_before = int(datetime(2026, 9, 23, 12, 0, tzinfo=MSK).timestamp())
+    assert "Напоминание: сегодня 10:00" in reminders.reminder_text(b, settings, now=same_day)
+    assert "Напоминание: завтра 10:00" in reminders.reminder_text(b, settings, now=day_before)
+

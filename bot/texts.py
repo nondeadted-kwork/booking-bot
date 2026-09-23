@@ -95,7 +95,7 @@ def mask(name: str) -> str:
 def person_line(first_name: str, username: str | None, phone: str | None, hide: bool) -> str:
     """Имя · @username · телефон. В демо чужие данные скрыты: «И***»."""
     if hide:
-        return mask(first_name)
+        return escape(mask(first_name))  # первая буква имени тоже может быть «<» или «&»
     parts = [escape(first_name)]
     if username:
         parts.append(f"@{username}")

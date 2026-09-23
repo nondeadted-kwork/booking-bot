@@ -95,3 +95,19 @@ async def test_background_step_seeds_only_in_demo(tmp_path, db):
     h = Harness(make_settings(), db)
     await reminders.step(h.bot, db, h.settings, NOW)
     assert await count(db, "bookings") > 0
+
+
+async def test_seeding_failure_does_not_stop_reminders(db, monkeypatch):
+    h = Harness(make_settings(), db)
+    await db.upsert_user(1, "Иван", None)
+    artem = (await db.barbers())[0]
+    await db.create_booking(user_id=1, barber_id=artem.id, service_code="cut", start_at=NOW + 1800,
+                            end_at=NOW + 5400, price=1500, now=NOW)
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(demo, "ensure_demo_data", broken)
+    await reminders.step(h.bot, db, h.settings, NOW)
+    assert any("Напоминание" in (getattr(c, "text", "") or "") for c in h.session.take())
+

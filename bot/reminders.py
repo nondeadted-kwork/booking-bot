@@ -27,10 +27,12 @@ from .db import Booking, Database
 log = logging.getLogger(__name__)
 
 
-def reminder_text(b: Booking, settings: Settings) -> str:
-    start = texts.local(b.start_at, settings.schedule.tz)
+def reminder_text(b: Booking, settings: Settings, now: int | None = None) -> str:
+    tz = settings.schedule.tz
+    start = texts.local(b.start_at, tz)
+    today = texts.local(int(time.time()) if now is None else now, tz).date()
     return (
-        f"⏰ <b>Напоминание: сегодня в {start:%H:%M}</b>\n\n"
+        f"⏰ <b>Напоминание: {texts.nearest(start, today)}</b>\n\n"
         f"{texts.booking_card(b, settings.schedule.tz, settings.business_address)}\n\n"
         f"Всё в силе?"
     )
@@ -50,7 +52,7 @@ async def tick(bot: Bot, db: Database, settings: Settings, now: int) -> None:
 
     for b in await db.due_reminders(now, settings.remind_before_min * 60):
         try:
-            await bot.send_message(b.user_id, reminder_text(b, settings), reply_markup=kb.reminder(b.id))
+            await bot.send_message(b.user_id, reminder_text(b, settings, now), reply_markup=kb.reminder(b.id))
             log.info("Reminder sent for booking #%s", b.id)
         except (TelegramNetworkError, TelegramRetryAfter, TelegramServerError) as e:
             log.warning("Reminder #%s postponed, Telegram unavailable: %s", b.id, e)
@@ -66,7 +68,11 @@ async def tick(bot: Bot, db: Database, settings: Settings, now: int) -> None:
 async def step(bot: Bot, db: Database, settings: Settings, now: int) -> None:
     """Один проход фонового цикла: в демо дописать демо-данные, затем брони и напоминания."""
     if settings.demo_mode:
-        await demo.ensure_demo_data(db, settings, now)
+        try:
+            await demo.ensure_demo_data(db, settings, now)
+        except Exception:
+            # Сбой демо-данных не должен останавливать напоминания и снятие броней.
+            log.exception("Demo data step failed, reminders go on")
     await tick(bot, db, settings, now)
 
 

@@ -143,11 +143,12 @@ async def my_actions(cb: CallbackQuery, callback_data: kb.MyCb, db: Database, se
         return
 
     tz = settings.schedule.tz
+    barber = f"\n✂️ {escape(b.barber_name)}" if b.barber_name else ""
     if callback_data.action == "come":
         await db.set_client_confirmed(b.id)
         await edit_cb(cb, f"👍 Отлично, ждём вас!\n\n{texts.booking_card(b, tz, settings.business_address)}")
         await notify_owners(bot, settings, f"✅ {escape(b.first_name)} подтвердил(а) визит: "
-                                           f"{texts.when(b, tz)} (#{b.id})", mirror_to=b.user_id)
+                                           f"{texts.when(b, tz)} (#{b.id}){barber}", mirror_to=b.user_id)
     elif callback_data.action == "remind":
         if not settings.demo_mode:
             await cb.answer("Недоступно", show_alert=True)
@@ -162,7 +163,7 @@ async def my_actions(cb: CallbackQuery, callback_data: kb.MyCb, db: Database, se
         await edit_cb(cb, f"Запись на {texts.when(b, tz)} отменена.{refund}\n\nЗаписаться снова: /book")
         await notify_owners(
             bot, settings,
-            f"❌ Клиент отменил запись #{b.id}\n{texts.service_title(b.service_code)}, {texts.when(b, tz)}\n"
+            f"❌ Клиент отменил запись #{b.id}\n{texts.service_title(b.service_code)}, {texts.when(b, tz)}{barber}\n"
             f"👤 {texts.client_line(b, hide=False)}" + ("\n⚠️ Была онлайн-оплата, оформите возврат." if b.paid else ""),
             mirror_to=b.user_id,
         )

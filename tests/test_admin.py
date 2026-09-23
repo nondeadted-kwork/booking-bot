@@ -9,6 +9,7 @@ from datetime import time as dtime
 
 import pytest
 from aiogram.methods import EditMessageText, SendDocument
+from aiogram.types import User
 
 from bot import keyboards as kb
 from bot.db import Barber, Booking
@@ -98,3 +99,18 @@ def test_day_view_fits_telegram_limit():
     ]
     text = day_view(day, items, barbers, {}, set(), settings, viewer_id=OWNER, is_owner=True)
     assert len(text) <= MAX_TEXT + 100 and "CSV" in text
+
+
+async def test_masked_names_are_escaped_for_other_visitors(db):
+    """Посетитель с «<» в имени не должен ломать панель остальным: Telegram отверг бы такой HTML."""
+    h = Harness(make_settings(), db)
+    odd = User(id=3, is_bot=False, first_name="<Тёма>")
+    await db.upsert_user(odd.id, odd.first_name, None)
+    artem, _ = await db.barbers()
+    booking = await book(db, odd.id, artem.id, at_day(h.settings, 1, 12))
+    await db.create_lead(odd.id, "вопрос про бороду", int(time.time()))
+    day = edited(await h.feed(**h.callback(CLIENT, kb.AdmCb(action="day", arg="1").pack()))).text
+    leads = edited(await h.feed(**h.callback(CLIENT, kb.AdmCb(action="leads").pack()))).text
+    card = edited(await h.feed(**h.callback(CLIENT, kb.AdmCb(action="card", arg=str(booking.id)).pack()))).text
+    for text in (day, leads, card):
+        assert "&lt;***" in text and "<***" not in text

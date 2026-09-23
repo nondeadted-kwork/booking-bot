@@ -334,3 +334,39 @@ async def test_demo_start_text_has_a_plan(db):
     h = Harness(make_settings(), db)
     calls = await h.feed(**h.message(CLIENT, "/start"))
     assert "Что попробовать" in calls[0].text and "Показать напоминание" in calls[0].text
+
+
+
+async def test_double_tap_on_confirm_keeps_the_success_card(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    await h.feed(**h.callback(CLIENT, confirm_cb))
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    assert "Вы записаны" in texts_of(calls) and "заняли" not in texts_of(calls)
+    assert len(await db.user_upcoming(CLIENT.id, 0)) == 1
+    assert sent_to(calls, OWNER) == []  # вторая «Новая запись» владельцу не уходит
+
+
+async def test_double_tap_with_any_barber_books_once(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT, barber="any")
+    await db.set_phone(CLIENT.id, "")
+    await h.feed(**h.callback(CLIENT, confirm_cb))
+    await h.feed(**h.callback(CLIENT, confirm_cb))
+    assert len(await db.user_upcoming(CLIENT.id, 0)) == 1
+
+
+async def test_come_and_cancel_notifications_name_the_barber(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    await h.feed(**h.callback(CLIENT, confirm_cb))
+    [booking] = await db.user_upcoming(CLIENT.id, 0)
+    calls = await h.feed(**h.callback(CLIENT, kb.MyCb(action="come", id=booking.id).pack()))
+    [to_owner] = sent_to(calls, OWNER)
+    assert "Артём" in to_owner.text
+    calls = await h.feed(**h.callback(CLIENT, kb.MyCb(action="cancel_yes", id=booking.id).pack()))
+    [to_owner] = sent_to(calls, OWNER)
+    assert "Артём" in to_owner.text
+

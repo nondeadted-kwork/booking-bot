@@ -17,7 +17,7 @@ from .. import availability
 from .. import keyboards as kb
 from .. import texts
 from ..config import SERVICES_BY_CODE, Service, Settings
-from ..db import Database, SlotTaken
+from ..db import Booking, Database, SlotTaken
 from ..notify import edit_cb, edit_or_send, notify_new_booking, notify_owners
 from ..slots import ANY
 
@@ -31,6 +31,11 @@ class PhoneForm(StatesGroup):
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def booked_text(b: Booking, settings: Settings) -> str:
+    return (f"✅ <b>Вы записаны!</b>\n\n{texts.booking_card(b, settings.schedule.tz, settings.business_address)}\n\n"
+            f"Напомню за час до визита. Если планы изменятся, отмените запись кнопкой ниже.")
 
 
 def service_header(service: Service) -> str:
@@ -266,6 +271,15 @@ async def finalize(bot: Bot, user: TgUser, service: Service, m: int, ts: int, pa
         else:
             await edit_or_send(bot, user.id, edit, f"{text} Выберите другой день:", kb.services())
 
+    own = [b for b in await db.bookings_between(ts, ts + 1, now_ts) if b.user_id == user.id]
+    if own:  # повторное нажатие «Подтвердить»: запись уже есть, вторую не создаём
+        if own[0].status == "pending_payment":
+            await edit_or_send(bot, user.id, edit, "⏳ Это время уже держится за вами. Оплатите счёт выше 👆")
+        else:
+            await edit_or_send(bot, user.id, edit, booked_text(own[0], settings),
+                               kb.booking_actions(own[0].id, demo=settings.demo_mode))
+        return
+
     candidates = (await availability.free_times(db, settings, service, m, start.date(), now)).get(start, [])
     online = pay and settings.payments_enabled
     # Если до визита меньше часа, отдельное напоминание не нужно: человек только что записался.
@@ -324,12 +338,8 @@ async def finalize(bot: Bot, user: TgUser, service: Service, m: int, ts: int, pa
                                                f"Проверьте PAYMENT_TOKEN.")
         return
 
-    await edit_or_send(
-        bot, user.id, edit,
-        f"✅ <b>Вы записаны!</b>\n\n{texts.booking_card(booking, tz, settings.business_address)}\n\n"
-        f"Напомню за час до визита. Если планы изменятся, отмените запись кнопкой ниже.",
-        kb.booking_actions(booking.id, demo=settings.demo_mode),
-    )
+    await edit_or_send(bot, user.id, edit, booked_text(booking, settings),
+                       kb.booking_actions(booking.id, demo=settings.demo_mode))
     await notify_new_booking(bot, settings, booking)
 
 
