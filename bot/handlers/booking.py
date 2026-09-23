@@ -328,7 +328,7 @@ async def finalize(bot: Bot, user: TgUser, service: Service, m: int, ts: int, pa
         bot, user.id, edit,
         f"✅ <b>Вы записаны!</b>\n\n{texts.booking_card(booking, tz, settings.business_address)}\n\n"
         f"Напомню за час до визита. Если планы изменятся, отмените запись кнопкой ниже.",
-        kb.booking_actions(booking.id),
+        kb.booking_actions(booking.id, demo=settings.demo_mode),
     )
     await notify_new_booking(bot, settings, booking)
 
@@ -370,7 +370,7 @@ async def paid(message: Message, db: Database, settings: Settings, bot: Bot) -> 
             f"✅ <b>Оплата прошла, вы записаны!</b>\n\n"
             f"{texts.booking_card(b, settings.schedule.tz, settings.business_address)}\n\n"
             f"Напомню за час до визита.",
-            reply_markup=kb.booking_actions(b.id),
+            reply_markup=kb.booking_actions(b.id, demo=settings.demo_mode),
         )
         if result == "ok":
             await notify_new_booking(bot, settings, b)

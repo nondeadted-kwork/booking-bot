@@ -25,6 +25,7 @@ from tests.harness import (
     ONE_BARBER,
     OTHER,
     OWNER,
+    OWNER_USER,
     Harness,
     buttons,
     first,
@@ -276,3 +277,60 @@ async def test_bot_profile_failure_does_not_stop_start(db):
 
     h.session.make_request = refuse
     await app.set_profile(h.bot, h.settings)  # не падает, только пишет предупреждение в лог
+
+
+async def test_demo_visitor_sees_what_owner_got(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    [to_owner] = sent_to(calls, OWNER)
+    [copy] = [c for c in sent_to(calls, CLIENT.id) if "владелец получил" in c.text]
+    assert to_owner.text in copy.text
+
+
+async def test_no_copy_without_demo_and_no_copy_to_owner(db):
+    h = Harness(make_settings(demo_mode=False), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    assert not any("владелец получил" in c.text for c in sent_to(calls, CLIENT.id))
+
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, OWNER_USER)
+    await db.set_phone(OWNER, "")
+    calls = await h.feed(**h.callback(OWNER_USER, confirm_cb))
+    assert len(sent_to(calls, OWNER)) == 1  # одно уведомление, без копии самому себе
+
+
+async def test_demo_reminder_button_does_not_cancel_the_real_reminder(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    card = next(c for c in calls if isinstance(c, EditMessageText) and "Вы записаны" in c.text)
+    remind_cb = next(d for d in buttons(card) if d.startswith("my:remind"))
+    [booking] = await db.user_upcoming(CLIENT.id, 0)
+
+    calls = await h.feed(**h.callback(CLIENT, remind_cb))
+    [reminder] = sent_to(calls, CLIENT.id)
+    assert "Напоминание" in reminder.text
+    assert (await db.get_booking(booking.id)).reminded_at == booking.reminded_at
+
+    calls = await h.feed(**h.callback(CLIENT, next(d for d in buttons(reminder) if d.startswith("my:come"))))
+    assert any("владелец получил" in c.text and "подтвердил" in c.text for c in sent_to(calls, CLIENT.id))
+
+
+async def test_no_reminder_button_without_demo(db):
+    h = Harness(make_settings(demo_mode=False), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    await db.set_phone(CLIENT.id, "")
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    card = next(c for c in calls if isinstance(c, EditMessageText) and "Вы записаны" in c.text)
+    assert not any(d.startswith("my:remind") for d in buttons(card))
+
+
+async def test_demo_start_text_has_a_plan(db):
+    h = Harness(make_settings(), db)
+    calls = await h.feed(**h.message(CLIENT, "/start"))
+    assert "Что попробовать" in calls[0].text and "Показать напоминание" in calls[0].text

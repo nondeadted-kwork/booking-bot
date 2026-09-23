@@ -16,14 +16,24 @@ from .keyboards import AdmCb
 
 log = logging.getLogger(__name__)
 
+# В демо посетитель видит, что в этот момент пришло владельцу: обе стороны помещаются в одно видео.
+MIRROR_HEADER = "👀 <i>В этот момент владелец получил:</i>\n\n"
 
-async def notify_owners(bot: Bot, settings: Settings, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+
+async def notify_owners(bot: Bot, settings: Settings, text: str, markup: InlineKeyboardMarkup | None = None,
+                        mirror_to: int | None = None) -> None:
+    """Шлёт владельцам. В демо копию получает и посетитель, чьё действие вызвало уведомление."""
     for owner_id in settings.owner_ids:
         try:
             await bot.send_message(owner_id, text, reply_markup=markup)
         except TelegramAPIError as e:
             # Частая причина: владелец не нажал /start у своего бота.
             log.warning("Не удалось уведомить владельца %s: %s", owner_id, e)
+    if settings.demo_mode and mirror_to is not None and mirror_to > 0 and mirror_to not in settings.owner_ids:
+        try:
+            await bot.send_message(mirror_to, MIRROR_HEADER + text, reply_markup=markup)
+        except TelegramAPIError as e:
+            log.warning("Не удалось отправить копию уведомления %s: %s", mirror_to, e)
 
 
 async def notify_new_booking(bot: Bot, settings: Settings, b: Booking) -> None:
@@ -38,7 +48,7 @@ async def notify_new_booking(bot: Bot, settings: Settings, b: Booking) -> None:
         f"👤 {texts.client_line(b, hide=False)}\n"
         f"{texts.payment_line(b)}"
     )
-    await notify_owners(bot, settings, text, kb.as_markup())
+    await notify_owners(bot, settings, text, kb.as_markup(), mirror_to=b.user_id)
 
 
 async def edit_or_send(

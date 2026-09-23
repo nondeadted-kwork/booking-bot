@@ -50,7 +50,7 @@ class BackCb(CallbackData, prefix="back"):
 
 
 class MyCb(CallbackData, prefix="my"):
-    action: str  # list | cancel | cancel_yes | come
+    action: str  # list | cancel | cancel_yes | come | remind
     id: int = 0
 
 
@@ -155,8 +155,10 @@ def confirm(service: Service, m: int, ts: int, payments: bool) -> InlineKeyboard
     return kb.as_markup()
 
 
-def booking_actions(booking_id: int) -> InlineKeyboardMarkup:
+def booking_actions(booking_id: int, demo: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    if demo:  # в демо напоминание можно посмотреть сразу, не дожидаясь часа до визита
+        kb.button(text="🧪 Показать напоминание сейчас", callback_data=MyCb(action="remind", id=booking_id))
     kb.button(text="❌ Отменить запись", callback_data=MyCb(action="cancel", id=booking_id))
     kb.button(text="🗂 Все мои записи", callback_data=MyCb(action="list"))
     kb.adjust(1)

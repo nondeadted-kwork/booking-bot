@@ -31,11 +31,14 @@ def start_text(first_name: str, settings: Settings) -> str:
     )
     if settings.demo_mode:
         text += (
-            "\n\n🧪 <b>Это демо.</b> Записывайтесь смело, салон ненастоящий. "
-            "Панель владельца открыта всем: кнопка «👀 Панель владельца»."
+            "\n\n🧪 <b>Это демо, салон ненастоящий.</b> Что попробовать:\n"
+            "1. 📅 Записаться: услуга, барбер, время\n"
+            "2. Посмотреть, что в этот момент получил владелец\n"
+            "3. Нажать «🧪 Показать напоминание сейчас»\n"
+            "4. Открыть «👀 Панель владельца»"
         )
         if settings.payments_enabled:
-            text += f"\nОплата тестовая, деньги не списываются. Карта: <code>{escape(settings.test_card_hint)}</code>"
+            text += f"\n\nОплата тестовая, деньги не списываются. Карта: <code>{escape(settings.test_card_hint)}</code>"
     return text
 
 
@@ -137,7 +140,12 @@ async def my_actions(cb: CallbackQuery, callback_data: kb.MyCb, db: Database, se
         await db.set_client_confirmed(b.id)
         await edit_cb(cb, f"👍 Отлично, ждём вас!\n\n{texts.booking_card(b, tz, settings.business_address)}")
         await notify_owners(bot, settings, f"✅ {escape(b.first_name)} подтвердил(а) визит: "
-                                           f"{texts.when(b, tz)} (#{b.id})")
+                                           f"{texts.when(b, tz)} (#{b.id})", mirror_to=b.user_id)
+    elif callback_data.action == "remind":
+        if not settings.demo_mode:
+            await cb.answer("Недоступно", show_alert=True)
+            return
+        await bot.send_message(cb.from_user.id, reminder_text(b, settings), reply_markup=kb.reminder(b.id))
     elif callback_data.action == "cancel":
         await edit_cb(cb, f"Отменить запись?\n\n{texts.booking_card(b, tz, settings.business_address)}",
                       kb.cancel_confirm(b.id))
@@ -149,6 +157,7 @@ async def my_actions(cb: CallbackQuery, callback_data: kb.MyCb, db: Database, se
             bot, settings,
             f"❌ Клиент отменил запись #{b.id}\n{texts.service_title(b.service_code)}, {texts.when(b, tz)}\n"
             f"👤 {texts.client_line(b, hide=False)}" + ("\n⚠️ Была онлайн-оплата, оформите возврат." if b.paid else ""),
+            mirror_to=b.user_id,
         )
     await cb.answer()
 
