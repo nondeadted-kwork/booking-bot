@@ -113,7 +113,8 @@ async def my_view(user_id: int, db: Database, settings: Settings) -> tuple[str, 
     blocks = [texts.booking_card(b, tz, settings.business_address) for b in items]
     labels = [(b.id, f"{texts.day_short(texts.local(b.start_at, tz).date())} "
                      f"{texts.local(b.start_at, tz):%H:%M}") for b in items]
-    return "🗂 <b>Ваши записи</b>\n\n" + "\n\n".join(blocks), kb.my_list(labels)
+    remind_id = items[0].id if settings.demo_mode else None
+    return "🗂 <b>Ваши записи</b>\n\n" + "\n\n".join(blocks), kb.my_list(labels, remind_id)
 
 
 @router.message(Command("my"))

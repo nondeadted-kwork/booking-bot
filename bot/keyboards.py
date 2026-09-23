@@ -190,8 +190,10 @@ def cancel_confirm(booking_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def my_list(ids: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+def my_list(ids: list[tuple[int, str]], remind_id: int | None = None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    if remind_id is not None:  # демо: напоминание по ближайшей записи, как в настоящем
+        kb.button(text="🧪 Показать напоминание сейчас", callback_data=MyCb(action="remind", id=remind_id))
     for booking_id, label in ids:
         kb.button(text=f"❌ Отменить {label}", callback_data=MyCb(action="cancel", id=booking_id))
     kb.button(text="📅 Новая запись", callback_data=BackCb(to="services"))

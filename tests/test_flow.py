@@ -27,6 +27,8 @@ from tests.harness import (
     OWNER,
     OWNER_USER,
     Harness,
+    at_day,
+    book,
     buttons,
     first,
     make_settings,
@@ -328,6 +330,29 @@ async def test_no_reminder_button_without_demo(db):
     calls = await h.feed(**h.callback(CLIENT, confirm_cb))
     card = next(c for c in calls if isinstance(c, EditMessageText) and "Вы записаны" in c.text)
     assert not any(d.startswith("my:remind") for d in buttons(card))
+
+
+async def test_my_bookings_has_reminder_button_for_the_nearest_in_demo(db):
+    h = Harness(make_settings(), db)
+    await h.feed(**h.message(CLIENT, "/start"))
+    await book(db, CLIENT.id, 1, at_day(h.settings, 3, 12))
+    nearest = await book(db, CLIENT.id, 1, at_day(h.settings, 2, 12))
+
+    [listing] = sent_to(await h.feed(**h.message(CLIENT, kb.BTN_MY)), CLIENT.id)
+    remind = [d for d in buttons(listing) if d.startswith("my:remind")]
+    assert remind == [kb.MyCb(action="remind", id=nearest.id).pack()]
+
+    [reminder] = sent_to(await h.feed(**h.callback(CLIENT, remind[0])), CLIENT.id)
+    assert "Напоминание" in reminder.text
+    assert any(d.startswith("my:come") for d in buttons(reminder))
+
+
+async def test_my_bookings_has_no_reminder_button_without_demo(db):
+    h = Harness(make_settings(demo_mode=False), db)
+    await h.feed(**h.message(CLIENT, "/start"))
+    await book(db, CLIENT.id, 1, at_day(h.settings, 2, 12))
+    [listing] = sent_to(await h.feed(**h.message(CLIENT, kb.BTN_MY)), CLIENT.id)
+    assert not any(d.startswith("my:remind") for d in buttons(listing))
 
 
 async def test_demo_start_text_has_a_plan(db):
