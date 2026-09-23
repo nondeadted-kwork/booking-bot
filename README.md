@@ -2,7 +2,7 @@
 
 **RU** · [EN below](#english)
 
-> Живое демо: **@your_demo_bot** · видео 40 сек: [ссылка] · записаться можно прямо сейчас, оплата тестовая
+> Живое демо: **@lezvie_barber_demo_bot** · видео 40 сек: [ссылка] · записаться можно прямо сейчас, оплата тестовая
 
 ![Скриншот](docs/screenshot.png)
 
@@ -145,4 +145,4 @@ end-to-end booking, payment, lead and panel flows with a mocked Bot API. Runs on
 cp .env.example .env && docker compose up -d --build
 ```
 
-Live demo: **@your_demo_bot** (demo mode: the owner panel is open to everyone, other clients’ names are masked).
+Live demo: **@lezvie_barber_demo_bot** (demo mode: the owner panel is open to everyone, other clients’ names are masked).
