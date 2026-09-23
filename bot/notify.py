@@ -11,7 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from . import texts
 from .config import Settings
-from .db import Booking
+from .db import Booking, Lead
 from .keyboards import AdmCb
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,20 @@ async def notify_new_booking(bot: Bot, settings: Settings, b: Booking) -> None:
         f"{texts.payment_line(b)}"
     )
     await notify_owners(bot, settings, text, kb.as_markup(), mirror_to=b.user_id)
+
+
+async def notify_new_lead(bot: Bot, settings: Settings, lead: Lead) -> None:
+    markup = None
+    if lead.username:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="💬 Написать", url=f"https://t.me/{lead.username}")
+        markup = kb.as_markup()
+    text = (
+        f"📩 <b>Новая заявка #{lead.id}</b>\n"
+        f"👤 {texts.lead_client_line(lead, hide=False)}\n"
+        f"💬 {escape(lead.text)}"
+    )
+    await notify_owners(bot, settings, text, markup, mirror_to=lead.user_id)
 
 
 async def edit_or_send(

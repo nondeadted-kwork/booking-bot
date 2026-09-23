@@ -16,16 +16,17 @@ from aiogram.types import User as TgUser
 from . import texts
 from .config import DEFAULT_BARBER_NAME, DEMO_BARBERS, BarberSeed, Settings
 from .db import Database
-from .handlers import admin, booking, client, fallback
+from .handlers import admin, booking, client, fallback, leads
 from .notify import notify_owners
 
 log = logging.getLogger(__name__)
 
 # Порядок важен: кнопки меню (client) раньше любых форм, ловушки (fallback) последними.
-ROUTERS = (client.router, admin.router, booking.router, fallback.router)
+ROUTERS = (client.router, admin.router, booking.router, leads.router, fallback.router)
 
 COMMANDS = [
     BotCommand(command="book", description="Записаться"),
+    BotCommand(command="lead", description="Оставить заявку"),
     BotCommand(command="my", description="Мои записи"),
     BotCommand(command="help", description="Контакты и вопросы"),
     BotCommand(command="start", description="Перезапустить бота"),

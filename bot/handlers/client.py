@@ -19,7 +19,7 @@ from ..config import SERVICES, Settings
 from ..db import Database
 from ..notify import edit_cb, notify_owners
 from ..reminders import reminder_text
-from . import admin
+from . import admin, leads
 
 router = Router(name="client")
 
@@ -27,7 +27,8 @@ router = Router(name="client")
 def start_text(first_name: str, settings: Settings) -> str:
     text = (
         f"Здравствуйте, {escape(first_name)}! 👋\n\n"
-        f"Я бот <b>{escape(settings.business_name)}</b>. Запишу вас за полминуты и напомню о визите за час."
+        f"Я бот <b>{escape(settings.business_name)}</b>. Запишу вас за полминуты и напомню о визите за час. "
+        f"Если есть вопрос, оставьте заявку, администратор ответит."
     )
     if settings.demo_mode:
         text += (
@@ -55,6 +56,12 @@ async def start(message: Message, db: Database, settings: Settings, state: FSMCo
 async def book(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Выберите услугу:", reply_markup=kb.services())
+
+
+@router.message(Command("lead"))
+@router.message(F.text == kb.BTN_LEAD)
+async def lead(message: Message, state: FSMContext, db: Database) -> None:
+    await leads.ask_text(message, state, db)
 
 
 @router.message(F.text == kb.BTN_PRICES)

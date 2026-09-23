@@ -64,6 +64,7 @@ class NoopCb(CallbackData, prefix="noop"):
 
 
 BTN_BOOK = "📅 Записаться"
+BTN_LEAD = "📝 Оставить заявку"
 BTN_MY = "🗂 Мои записи"
 BTN_PRICES = "💈 Услуги и цены"
 BTN_CONTACTS = "📍 Контакты"
@@ -74,9 +75,11 @@ BTN_SKIP_PHONE = "Пропустить"
 def main_menu(can_admin: bool) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=BTN_BOOK)],
-        [KeyboardButton(text=BTN_MY), KeyboardButton(text=BTN_PRICES)],
-        [KeyboardButton(text=BTN_CONTACTS)] + ([KeyboardButton(text=BTN_ADMIN)] if can_admin else []),
+        [KeyboardButton(text=BTN_LEAD), KeyboardButton(text=BTN_MY)],
+        [KeyboardButton(text=BTN_PRICES), KeyboardButton(text=BTN_CONTACTS)],
     ]
+    if can_admin:
+        rows.append([KeyboardButton(text=BTN_ADMIN)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder="Выберите действие")
 
 
