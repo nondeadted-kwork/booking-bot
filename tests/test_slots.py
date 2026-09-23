@@ -5,7 +5,8 @@ from bot.config import Schedule
 from bot.slots import calendar_days, free_slots
 
 MSK = ZoneInfo("Europe/Moscow")
-SCH = Schedule(tz=MSK, work_start=time(10), work_end=time(14), slot_step_min=30, min_lead_min=60)
+SCH = Schedule(tz=MSK, work_start=time(10), work_end=time(14), slot_step_min=30, min_lead_min=60,
+               workdays=frozenset({0, 1, 2, 3, 4, 5}))  # пн-сб
 WEDNESDAY = date(2026, 9, 23)
 SUNDAY = date(2026, 9, 27)
 

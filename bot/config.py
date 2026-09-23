@@ -29,13 +29,31 @@ SERVICES_BY_CODE = {s.code: s for s in SERVICES}
 
 
 @dataclass(frozen=True)
+class BarberSeed:
+    """Барбер, которого бот создаёт сам при первом запуске. Дальше барберами управляют из панели."""
+    name: str
+    about: str
+    workdays: frozenset[int]  # 0 = пн … 6 = вс
+
+
+# Демо: три барбера с разными выходными, чтобы выбор мастера имел смысл.
+DEMO_BARBERS: tuple[BarberSeed, ...] = (
+    BarberSeed("Артём", "Фейды и короткие мужские стрижки, 8 лет в профессии", frozenset({0, 1, 2, 3, 4})),
+    BarberSeed("Максим", "Борода и стрижка с бородой, подберёт форму под лицо", frozenset({2, 3, 4, 5, 6})),
+    BarberSeed("Илья", "Классика и детские стрижки, найдёт подход к самым маленьким", frozenset({0, 1, 4, 5, 6})),
+)
+# Без демо бот стартует с одним мастером на графике салона, и шаг выбора мастера не показывается.
+DEFAULT_BARBER_NAME = "Мастер"
+
+
+@dataclass(frozen=True)
 class Schedule:
     tz: ZoneInfo = ZoneInfo("Europe/Moscow")
     work_start: time = time(10, 0)
-    work_end: time = time(20, 0)
-    workdays: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5})  # пн–сб
+    work_end: time = time(21, 0)
+    workdays: frozenset[int] = frozenset(range(7))  # салон открыт каждый день, у барберов свои дни
     slot_step_min: int = 30
-    days_ahead: int = 7          # сколько дней вперёд показывать
+    days_ahead: int = 7          # на сколько календарных дней вперёд можно записаться, считая сегодня
     min_lead_min: int = 60       # нельзя записаться ближе, чем за час
 
 
