@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from bot.config import DEMO_BARBERS, BarberSeed
-from bot.db import Database, SlotTaken
+from bot.db import Database, SeedBooking, SlotTaken
 
 NOW = 1_790_000_000
 HOUR = 3600
@@ -211,3 +211,44 @@ async def test_barber_upcoming_load_and_filter(db):
     assert [b.start_at for b in await db.barber_upcoming(1, NOW)] == [NOW + 2 * HOUR, NOW + 4 * HOUR]
     assert await db.barber_load(NOW - 60) == [("Артём", 2), ("Максим", 1)]
     assert [b.user_id for b in await db.bookings_between(NOW, NOW + 6 * HOUR, NOW, barber_id=2)] == [3]
+
+
+async def test_leads_are_stored_and_counted(db):
+    lead = await db.create_lead(1, "Можно в субботу?", NOW)
+    assert (lead.first_name, lead.text) == ("User1", "Можно в субботу?")
+    await db.create_lead(1, "И ещё вопрос", NOW + 10)
+    await db.create_lead(2, "Другой человек", NOW + 20)
+    assert await db.count_leads_since(1, NOW) == 2
+    assert await db.count_leads_since(1, NOW + 5) == 1
+    assert [x.text for x in await db.recent_leads(2)] == ["Другой человек", "И ещё вопрос"]
+
+
+async def test_meta_roundtrip(db):
+    assert await db.get_meta("x") is None
+    await db.set_meta("x", "1")
+    await db.set_meta("x", "2")
+    assert await db.get_meta("x") == "2"
+
+
+async def test_demo_day_skips_clashes_and_remembers_day(db):
+    clients = [(-1, "Алексей К.", "+7 900 100-00-01"), (-2, "Иван П.", "+7 900 100-00-02")]
+    await db.add_demo_clients(clients)
+    await db.add_demo_clients(clients)  # повтор ничего не ломает
+    await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1))  # живая запись посетителя
+    rows = [
+        SeedBooking(-1, 1, "cut", NOW + 2 * HOUR, NOW + 3 * HOUR, 1500, "confirmed", 0, False, NOW),  # пересечение
+        SeedBooking(-2, 1, "cut", NOW + 4 * HOUR, NOW + 5 * HOUR, 1500, "confirmed", 150000, True, NOW),
+        SeedBooking(-2, 2, "beard", NOW + 2 * HOUR, NOW + 2 * HOUR + 1800, 900, "cancelled", 0, False, NOW),
+    ]
+    assert await db.add_demo_day("2026-09-24", rows, NOW) == 2
+    assert await db.get_meta("demo_seeded_until") == "2026-09-24"
+    seeded = [b for b in await db.all_bookings() if b.user_id < 0]
+    assert {(b.user_id, b.status) for b in seeded} == {(-2, "confirmed"), (-2, "cancelled")}
+    assert all(b.reminded_at is not None for b in seeded)
+
+
+async def test_demo_leads_are_added_once(db):
+    await db.add_demo_clients([(-1, "Алексей К.", "+7 900 100-00-01")])
+    await db.add_demo_leads([(-1, "Есть сертификаты?", NOW)])
+    await db.add_demo_leads([(-1, "Есть сертификаты?", NOW)])
+    assert len(await db.recent_leads()) == 1

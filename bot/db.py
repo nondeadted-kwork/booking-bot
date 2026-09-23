@@ -86,6 +86,7 @@ BOOKING_COLUMNS = """
     u.first_name, u.username, u.phone, br.name AS barber_name
 """
 BOOKING_FROM = "FROM bookings b JOIN users u ON u.id = b.user_id LEFT JOIN barbers br ON br.id = b.barber_id"
+LEAD_COLUMNS = "l.id, l.user_id, l.text, l.created_at, u.first_name, u.username, u.phone"
 
 
 def parse_workdays(raw: str) -> frozenset[int]:
@@ -149,6 +150,32 @@ class Barber:
     def from_row(cls, row: aiosqlite.Row) -> "Barber":
         return cls(id=row["id"], name=row["name"], about=row["about"], workdays=parse_workdays(row["workdays"]),
                    active=bool(row["active"]), sort=row["sort"])
+
+
+@dataclass
+class Lead:
+    id: int
+    user_id: int
+    text: str
+    created_at: int
+    first_name: str
+    username: str | None
+    phone: str | None
+
+
+@dataclass(frozen=True)
+class SeedBooking:
+    """Запись демо-данных. Вставляется напрямую: без брони, уведомлений и напоминаний."""
+    user_id: int
+    barber_id: int
+    service_code: str
+    start_at: int
+    end_at: int
+    price: int
+    status: str            # confirmed | cancelled
+    paid: int              # копейки
+    client_confirmed: bool
+    created_at: int
 
 
 class Database:
@@ -531,3 +558,100 @@ class Database:
             (since,),
         )
         return [(r["name"], r["n"]) for r in rows]
+
+    # --- заявки --------------------------------------------------------------
+
+    async def create_lead(self, user_id: int, text: str, now: int) -> Lead:
+        cur = await self.conn.execute("INSERT INTO leads (user_id, text, created_at) VALUES (?, ?, ?)",
+                                      (user_id, text, now))
+        lead = await self.get_lead(cur.lastrowid)
+        assert lead is not None
+        return lead
+
+    async def get_lead(self, lead_id: int) -> Lead | None:
+        row = await self._one(f"SELECT {LEAD_COLUMNS} FROM leads l JOIN users u ON u.id = l.user_id WHERE l.id = ?",
+                              (lead_id,))
+        return Lead(**dict(row)) if row else None
+
+    async def recent_leads(self, limit: int = 10) -> list[Lead]:
+        rows = await self._all(
+            f"SELECT {LEAD_COLUMNS} FROM leads l JOIN users u ON u.id = l.user_id "
+            f"ORDER BY l.created_at DESC, l.id DESC LIMIT ?",
+            (limit,),
+        )
+        return [Lead(**dict(r)) for r in rows]
+
+    async def count_leads_since(self, user_id: int, since: int) -> int:
+        row = await self._one("SELECT COUNT(*) AS n FROM leads WHERE user_id = ? AND created_at >= ?",
+                              (user_id, since))
+        return row["n"]
+
+    # --- служебные значения ------------------------------------------------------
+
+    async def get_meta(self, key: str) -> str | None:
+        row = await self._one("SELECT value FROM meta WHERE key = ?", (key,))
+        return row["value"] if row else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    # --- демо-данные ---------------------------------------------------------------
+
+    async def add_demo_clients(self, clients: Sequence[tuple[int, str, str]]) -> None:
+        """Ненастоящие клиенты демо-режима: (отрицательный id, имя, телефон). Повтор ничего не дублирует."""
+        await self.conn.executemany("INSERT OR IGNORE INTO users (id, first_name, phone) VALUES (?, ?, ?)", clients)
+
+    async def add_demo_day(self, day: str, rows: Sequence[SeedBooking], now: int) -> int:
+        """Демо-записи за один день одной транзакцией, вместе с отметкой дня в meta.
+
+        Пересечения с живыми записями пропускаются. Отметка в той же транзакции: если процесс упадёт
+        посреди заполнения, день не задвоится. Возвращает число добавленных записей.
+        """
+        added = 0
+        async with self._write_lock:
+            await self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for r in rows:
+                    if r.status == "confirmed":
+                        clash = await self._one(
+                            f"SELECT 1 FROM bookings b WHERE {ACTIVE} AND b.barber_id = :barber "
+                            f"AND b.start_at < :end AND b.end_at > :start LIMIT 1",
+                            {"now": now, "barber": r.barber_id, "start": r.start_at, "end": r.end_at},
+                        )
+                        if clash:
+                            continue
+                    await self.conn.execute(
+                        """INSERT INTO bookings (user_id, barber_id, service_code, start_at, end_at, price, status,
+                                                 paid, reminded_at, client_confirmed, cancelled_by, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (r.user_id, r.barber_id, r.service_code, r.start_at, r.end_at, r.price, r.status, r.paid,
+                         r.created_at, int(r.client_confirmed), "client" if r.status == "cancelled" else None,
+                         r.created_at),
+                    )
+                    added += 1
+                await self.conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('demo_seeded_until', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (day,),
+                )
+                await self.conn.execute("COMMIT")
+            except BaseException:
+                await self.conn.execute("ROLLBACK")
+                raise
+        return added
+
+    async def add_demo_leads(self, rows: Sequence[tuple[int, str, int]]) -> None:
+        """Демо-заявки (user_id, текст, created_at). Добавляются один раз за всю жизнь базы."""
+        async with self._write_lock:
+            await self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if not await self._one("SELECT 1 FROM meta WHERE key = 'demo_leads'"):
+                    await self.conn.executemany("INSERT INTO leads (user_id, text, created_at) VALUES (?, ?, ?)", rows)
+                    await self.conn.execute("INSERT INTO meta (key, value) VALUES ('demo_leads', '1')")
+                await self.conn.execute("COMMIT")
+            except BaseException:
+                await self.conn.execute("ROLLBACK")
+                raise
