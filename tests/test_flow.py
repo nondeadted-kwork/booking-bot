@@ -32,7 +32,7 @@ from aiogram.types import (
 from bot import keyboards as kb
 from bot import reminders
 from bot.app import build_dispatcher
-from bot.config import Settings
+from bot.config import BarberSeed, Settings
 from bot.db import Database
 from bot.handlers import admin, client
 
@@ -109,6 +109,7 @@ def texts_of(calls) -> str:
 async def db(tmp_path):
     database = Database(str(tmp_path / "flow.db"))
     await database.connect()
+    await database.ensure_barbers((BarberSeed("Мастер", "", frozenset(range(7))),))
     yield database
     await database.close()
 

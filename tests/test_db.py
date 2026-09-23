@@ -24,9 +24,9 @@ async def db(tmp_path):
     await database.close()
 
 
-def booking(user_id: int, start: int, minutes: int = 60, **kw):
-    return dict(user_id=user_id, service_code="cut", start_at=start, end_at=start + minutes * 60,
-                price=1500, now=NOW, **kw)
+def booking(user_id: int, start: int, minutes: int = 60, barber_id: int = 1, **kw):
+    return dict(user_id=user_id, barber_id=barber_id, service_code="cut", start_at=start,
+                end_at=start + minutes * 60, price=1500, now=NOW, **kw)
 
 
 async def test_overlapping_booking_is_rejected(db):
@@ -152,3 +152,62 @@ async def test_old_database_is_migrated_in_place(tmp_path):
         assert (booking.user_id, booking.barber_name) == (1, "Мастер")
     finally:
         await database.close()
+
+
+async def test_same_time_with_different_barbers_is_allowed(db):
+    await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1))
+    second = await db.create_booking(**booking(2, NOW + 2 * HOUR, barber_id=2))
+    assert second.barber_name == "Максим"
+    with pytest.raises(SlotTaken):
+        await db.create_booking(**booking(3, NOW + 2 * HOUR + 1800, barber_id=2))
+
+
+async def test_race_is_per_barber(db):
+    """20 попыток на одно время к двум барберам: у каждого барбера ровно один победитель."""
+    async def attempt(i):
+        barber_id = 1 + i % 2
+        try:
+            await db.create_booking(**booking(i % 3 + 1, NOW + 5 * HOUR, barber_id=barber_id))
+            return barber_id
+        except SlotTaken:
+            return None
+
+    results = await asyncio.gather(*(attempt(i) for i in range(20)))
+    assert sorted(r for r in results if r) == [1, 2]
+
+
+async def test_busy_by_barber_groups_intervals(db):
+    await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1))
+    await db.create_booking(**booking(2, NOW + 4 * HOUR, barber_id=2))
+    busy = await db.busy_by_barber(NOW, NOW + 6 * HOUR, NOW)
+    assert busy == {1: [(NOW + 2 * HOUR, NOW + 3 * HOUR)], 2: [(NOW + 4 * HOUR, NOW + 5 * HOUR)]}
+
+
+async def test_payment_conflict_is_checked_for_the_same_barber_only(db):
+    b = await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1, hold_until=NOW + 900))
+    await db.expire_holds(NOW + 901)
+    await db.create_booking(**dict(booking(2, NOW + 2 * HOUR, barber_id=2), now=NOW + 901))
+    assert await db.confirm_payment(b.id, "charge", 150000, NOW + 902) == "ok"
+
+
+async def test_payment_confirms_even_if_barber_was_hidden(db):
+    b = await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1, hold_until=NOW + 900))
+    await db.update_barber(1, active=False)
+    assert await db.confirm_payment(b.id, "charge", 150000, NOW + 60) == "ok"
+    assert (await db.get_booking(b.id)).status == "confirmed"
+
+
+async def test_fake_clients_are_skipped_by_reminders_and_broadcasts(db):
+    await db.conn.execute("INSERT INTO users (id, first_name) VALUES (-1, 'Демо')")
+    await db.create_booking(**booking(-1, NOW + 50 * 60))
+    assert await db.due_reminders(NOW, 60 * 60) == []
+    assert -1 not in await db.active_user_ids()
+
+
+async def test_barber_upcoming_load_and_filter(db):
+    await db.create_booking(**booking(1, NOW + 2 * HOUR, barber_id=1))
+    await db.create_booking(**booking(2, NOW + 4 * HOUR, barber_id=1))
+    await db.create_booking(**booking(3, NOW + 2 * HOUR, barber_id=2))
+    assert [b.start_at for b in await db.barber_upcoming(1, NOW)] == [NOW + 2 * HOUR, NOW + 4 * HOUR]
+    assert await db.barber_load(NOW - 60) == [("Артём", 2), ("Максим", 1)]
+    assert [b.user_id for b in await db.bookings_between(NOW, NOW + 6 * HOUR, NOW, barber_id=2)] == [3]

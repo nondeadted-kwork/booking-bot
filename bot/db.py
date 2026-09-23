@@ -219,7 +219,8 @@ class Database:
         await self.conn.execute("UPDATE users SET is_blocked = 1 WHERE id = ?", (user_id,))
 
     async def active_user_ids(self) -> list[int]:
-        return [r["id"] for r in await self._all("SELECT id FROM users WHERE is_blocked = 0")]
+        """Кому слать рассылку. Демо-клиенты (id ≤ 0) ненастоящие, им не пишем."""
+        return [r["id"] for r in await self._all("SELECT id FROM users WHERE is_blocked = 0 AND id > 0")]
 
     # --- барберы -------------------------------------------------------------
 
@@ -302,6 +303,18 @@ class Database:
         )
         return [(r["start_at"], r["end_at"]) for r in rows]
 
+    async def busy_by_barber(self, start: int, end: int, now: int) -> dict[int, list[Interval]]:
+        """Занятое время каждого барбера в промежутке: id → [(начало, конец)], по времени."""
+        rows = await self._all(
+            f"SELECT b.barber_id, b.start_at, b.end_at FROM bookings b "
+            f"WHERE {ACTIVE} AND b.start_at < :end AND b.end_at > :start ORDER BY b.start_at",
+            {"now": now, "start": start, "end": end},
+        )
+        busy: dict[int, list[Interval]] = {}
+        for r in rows:
+            busy.setdefault(r["barber_id"], []).append((r["start_at"], r["end_at"]))
+        return busy
+
     async def get_booking(self, booking_id: int) -> Booking | None:
         row = await self._one(f"SELECT {BOOKING_COLUMNS} {BOOKING_FROM} WHERE b.id = ?", (booking_id,))
         return Booking.from_row(row) if row else None
@@ -314,11 +327,21 @@ class Database:
         )
         return [Booking.from_row(r) for r in rows]
 
-    async def bookings_between(self, start: int, end: int, now: int) -> list[Booking]:
+    async def bookings_between(self, start: int, end: int, now: int, barber_id: int | None = None) -> list[Booking]:
+        barber = "AND b.barber_id = :barber" if barber_id is not None else ""
         rows = await self._all(
             f"SELECT {BOOKING_COLUMNS} {BOOKING_FROM} "
-            f"WHERE {ACTIVE} AND b.start_at >= :start AND b.start_at < :end ORDER BY b.start_at",
-            {"now": now, "start": start, "end": end},
+            f"WHERE {ACTIVE} AND b.start_at >= :start AND b.start_at < :end {barber} ORDER BY b.start_at",
+            {"now": now, "start": start, "end": end, "barber": barber_id},
+        )
+        return [Booking.from_row(r) for r in rows]
+
+    async def barber_upcoming(self, barber_id: int, now: int) -> list[Booking]:
+        """Будущие записи барбера: для проверок перед отпуском и сменой рабочих дней."""
+        rows = await self._all(
+            f"SELECT {BOOKING_COLUMNS} {BOOKING_FROM} "
+            f"WHERE {ACTIVE} AND b.barber_id = :barber AND b.end_at > :now ORDER BY b.start_at",
+            {"now": now, "barber": barber_id},
         )
         return [Booking.from_row(r) for r in rows]
 
@@ -329,7 +352,7 @@ class Database:
     async def due_reminders(self, now: int, window_sec: int) -> list[Booking]:
         rows = await self._all(
             f"SELECT {BOOKING_COLUMNS} {BOOKING_FROM} "
-            f"WHERE b.status = 'confirmed' AND b.reminded_at IS NULL "
+            f"WHERE b.status = 'confirmed' AND b.reminded_at IS NULL AND b.user_id > 0 "
             f"  AND b.start_at > :now AND b.start_at <= :now + :window",
             {"now": now, "window": window_sec},
         )
@@ -341,6 +364,7 @@ class Database:
         self,
         *,
         user_id: int,
+        barber_id: int,
         service_code: str,
         start_at: int,
         end_at: int,
@@ -349,9 +373,9 @@ class Database:
         hold_until: int | None = None,
         reminded_at: int | None = None,
     ) -> Booking:
-        """Атомарно проверяет пересечение и создаёт запись.
+        """Атомарно проверяет пересечение у этого барбера и создаёт запись.
 
-        asyncio.Lock защищает от гонки внутри процесса, BEGIN IMMEDIATE — от второго процесса,
+        asyncio.Lock защищает от гонки внутри процесса, BEGIN IMMEDIATE от второго процесса,
         если его кто-то случайно запустит рядом.
         """
         status = "pending_payment" if hold_until else "confirmed"
@@ -359,16 +383,18 @@ class Database:
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
                 clash = await self._one(
-                    f"SELECT 1 FROM bookings b WHERE {ACTIVE} AND b.start_at < :end AND b.end_at > :start LIMIT 1",
-                    {"now": now, "start": start_at, "end": end_at},
+                    f"SELECT 1 FROM bookings b WHERE {ACTIVE} AND b.barber_id = :barber "
+                    f"AND b.start_at < :end AND b.end_at > :start LIMIT 1",
+                    {"now": now, "barber": barber_id, "start": start_at, "end": end_at},
                 )
                 if clash:
                     raise SlotTaken
                 cur = await self.conn.execute(
-                    """INSERT INTO bookings (user_id, service_code, start_at, end_at, price, status,
+                    """INSERT INTO bookings (user_id, barber_id, service_code, start_at, end_at, price, status,
                                              hold_until, reminded_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (user_id, service_code, start_at, end_at, price, status, hold_until, reminded_at, now),
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, barber_id, service_code, start_at, end_at, price, status, hold_until, reminded_at,
+                     now),
                 )
                 booking_id = cur.lastrowid
                 await self.conn.execute("COMMIT")
@@ -397,16 +423,18 @@ class Database:
         async with self._write_lock:
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
-                b = await self._one("SELECT id, status, start_at, end_at FROM bookings WHERE id = ?", (booking_id,))
+                b = await self._one("SELECT id, barber_id, status, start_at, end_at FROM bookings WHERE id = ?",
+                                    (booking_id,))
                 if b is None:
                     result = "missing"
                 elif b["status"] == "confirmed":
                     result = "already"
                 else:
                     clash = await self._one(
-                        f"SELECT 1 FROM bookings b WHERE {ACTIVE} AND b.id != :id "
+                        f"SELECT 1 FROM bookings b WHERE {ACTIVE} AND b.id != :id AND b.barber_id IS :barber "
                         f"AND b.start_at < :end AND b.end_at > :start LIMIT 1",
-                        {"now": now, "id": booking_id, "start": b["start_at"], "end": b["end_at"]},
+                        {"now": now, "id": booking_id, "barber": b["barber_id"], "start": b["start_at"],
+                         "end": b["end_at"]},
                     )
                     result = "conflict" if clash else "ok"
                     await self.conn.execute(
@@ -492,3 +520,14 @@ class Database:
             "cancelled": period["cancelled"] or 0,
             "top_service": top["service_code"] if top else None,
         }
+
+    async def barber_load(self, since: int) -> list[tuple[str, int]]:
+        """Подтверждённые записи каждого барбера, созданные начиная с `since`, в порядке списка барберов."""
+        rows = await self._all(
+            """SELECT br.name AS name, COUNT(b.id) AS n
+               FROM barbers br JOIN bookings b ON b.barber_id = br.id
+               WHERE b.status = 'confirmed' AND b.created_at >= ?
+               GROUP BY br.id ORDER BY br.sort, br.id""",
+            (since,),
+        )
+        return [(r["name"], r["n"]) for r in rows]

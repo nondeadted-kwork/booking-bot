@@ -299,9 +299,11 @@ async def finalize(bot: Bot, user: TgUser, service: Service, ts: int, pay: bool,
     online = pay and settings.payments_enabled
     # Если до визита меньше часа, отдельное напоминание не нужно — человек только что записался.
     already_reminded = now_ts if ts - now_ts <= settings.remind_before_min * 60 else None
+    barber = (await db.barbers())[0]  # временно: выбор барбера появится вместе с booking.py
     try:
         booking = await db.create_booking(
             user_id=user.id,
+            barber_id=barber.id,
             service_code=service.code,
             start_at=ts,
             end_at=ts + service.minutes * 60,
