@@ -59,6 +59,12 @@ class AdmCb(CallbackData, prefix="adm"):
     arg: str = ""
 
 
+class BarbCb(CallbackData, prefix="bar"):
+    action: str  # экраны и действия раздела «Барберы», см. handlers/barbers.py
+    id: int = 0
+    arg: str = ""
+
+
 class NoopCb(CallbackData, prefix="noop"):
     reason: str = ""
 
@@ -200,17 +206,37 @@ def admin_menu() -> InlineKeyboardMarkup:
     kb.button(text="📋 Сегодня", callback_data=AdmCb(action="day", arg="0"))
     kb.button(text="📆 Завтра", callback_data=AdmCb(action="day", arg="1"))
     kb.button(text="🗓 7 дней", callback_data=AdmCb(action="week"))
+    kb.button(text="💈 Барберы", callback_data=BarbCb(action="list"))
+    kb.button(text="📩 Заявки", callback_data=AdmCb(action="leads"))
     kb.button(text="🚫 Выходные", callback_data=AdmCb(action="closed"))
     kb.button(text="📣 Рассылка", callback_data=AdmCb(action="broadcast"))
     kb.button(text="📊 Статистика", callback_data=AdmCb(action="stats"))
     kb.button(text="📤 Выгрузка CSV", callback_data=AdmCb(action="csv"))
-    kb.adjust(2, 2, 2, 1)
+    kb.adjust(2, 2, 2, 2, 1)
     return kb.as_markup()
 
 
 def admin_back() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="« Панель", callback_data=AdmCb(action="menu"))
+    return kb.as_markup()
+
+
+def admin_week(days: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """days: (смещение от сегодня, подпись дня)."""
+    kb = InlineKeyboardBuilder()
+    for offset, label in days:
+        kb.button(text=label, callback_data=AdmCb(action="day", arg=str(offset)))
+    kb.button(text="« Панель", callback_data=AdmCb(action="menu"))
+    kb.adjust(*([2] * ((len(days) + 1) // 2)), 1)
+    return kb.as_markup()
+
+
+def admin_day_back() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="« 7 дней", callback_data=AdmCb(action="week"))
+    kb.button(text="« Панель", callback_data=AdmCb(action="menu"))
+    kb.adjust(2)
     return kb.as_markup()
 
 
