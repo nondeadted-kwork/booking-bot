@@ -88,13 +88,13 @@ class Settings:
         except ValueError:
             sys.exit("OWNER_IDS должен быть списком числовых id через запятую, например: 123456789,987654321")
         if not owners:
-            print("⚠️  OWNER_IDS пуст — уведомления о записях никому не придут.", file=sys.stderr)
+            print("⚠️  OWNER_IDS пуст: уведомления о записях никому не придут.", file=sys.stderr)
 
         tz_name = os.getenv("TZ_NAME", "Europe/Moscow")
         try:
             tz = ZoneInfo(tz_name)
         except (ZoneInfoNotFoundError, ValueError):
-            sys.exit(f"TZ_NAME={tz_name!r} — неизвестный часовой пояс. Пример: Europe/Moscow, Asia/Yekaterinburg")
+            sys.exit(f"TZ_NAME={tz_name!r}: неизвестный часовой пояс. Пример: Europe/Moscow, Asia/Yekaterinburg")
         return cls(
             bot_token=token,
             owner_ids=owners,

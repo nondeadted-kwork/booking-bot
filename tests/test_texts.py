@@ -1,4 +1,6 @@
 """Форматирование: дни недели, ближайшее время, карточка записи, описание бота."""
+import ast
+import pathlib
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -51,3 +53,29 @@ def test_bot_descriptions_fit_telegram_limits():
         assert len(texts.bot_short_description(settings)) <= 120
     demo = Settings(bot_token="1:T", owner_ids=frozenset(), demo_mode=True)
     assert "Демо бота записи" in texts.bot_description(demo)
+
+
+BOT_DIR = pathlib.Path(__file__).resolve().parent.parent / "bot"
+
+
+def docstrings(tree: ast.AST) -> set[int]:
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                found.add(id(first.value))
+    return found
+
+
+def test_no_long_dashes_in_bot_texts():
+    """Тексты бота видят покупатели на скринах и в видео: без длинных тире, как и тексты кворков."""
+    found = []
+    for path in sorted(BOT_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skip = docstrings(tree)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
+                    and ("—" in node.value or "–" in node.value)):
+                found.append(f"{path.relative_to(BOT_DIR)}:{node.lineno}: {node.value[:60]!r}")
+    assert not found, "\n".join(found)
