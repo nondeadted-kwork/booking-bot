@@ -50,7 +50,7 @@
 ## Стек
 
 Python 3.12 · aiogram 3 · SQLite (aiosqlite, WAL) · Docker · pytest.
-Около 3 300 строк кода и 87 тестов, включая сквозные сценарии записи, оплаты, заявок и панели
+Около 3 300 строк кода и 95 тестов, включая сквозные сценарии записи, оплаты, заявок и панели
 без реального Telegram. Внешних сервисов, кроме Telegram, не нужно. Запускается на VPS за 200 ₽ в месяц.
 
 ```
@@ -78,7 +78,7 @@ tests/              окна, база, заявки, панель, барбер
 cp .env.example .env            # вставьте BOT_TOKEN и свой OWNER_IDS
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                          # 87 тестов, несколько секунд
+pytest                          # 95 тестов, несколько секунд
 python -m bot
 ```
 
@@ -91,6 +91,7 @@ ssh root@IP
 curl -fsSL https://get.docker.com | sh
 git clone https://github.com/nondeadted-kwork/booking-bot.git && cd booking-bot
 cp .env.example .env && nano .env
+mkdir -p data && chown 1000:1000 data   # бот в контейнере пишет базу от пользователя с uid 1000
 docker compose up -d --build
 docker compose logs -f bot      # должно быть «Started @your_bot»
 ```
@@ -100,7 +101,9 @@ docker compose logs -f bot      # должно быть «Started @your_bot»
 
 **Онлайн-оплата.** @BotFather → `/mybots` → бот → Payments → ЮKassa → «Подключить тестовый».
 Полученный токен вставьте в `PAYMENT_TOKEN`. Для боевых платежей нужен договор с ЮKassa,
-токен меняется на боевой, код остаётся тот же.
+токен меняется на боевой, код остаётся тот же. Тест ЮKassa требует кабинета в ЮKassa. Для демо без
+регистрации подойдёт PayMaster → «Connect PayMaster TEST», его тестовая карта 4100 0000 0000 0001
+(впишите её в `TEST_CARD_HINT`, бот покажет её в приветствии).
 
 ## Под заказчика
 
@@ -138,7 +141,7 @@ a reminder an hour before. The owner manages barbers, schedule and leads right i
   “any free barber” falls back to the next one, 15-minute payment holds that release themselves, state kept
   in callback data and SQLite, a global error handler alerts the owner in Telegram.
 
-**Stack:** Python 3.12, aiogram 3, SQLite, Docker. About 3,300 lines of code, 87 tests including
+**Stack:** Python 3.12, aiogram 3, SQLite, Docker. About 3,300 lines of code, 95 tests including
 end-to-end booking, payment, lead and panel flows with a mocked Bot API. Runs on a $3/month VPS.
 
 ```bash
