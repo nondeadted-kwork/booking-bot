@@ -10,11 +10,10 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramUnauthorizedError
-from aiogram.types import BotCommand
 from aiogram.utils.token import TokenValidationError
 
 from . import reminders
-from .app import build_dispatcher
+from .app import bootstrap, build_dispatcher, set_profile
 from .config import Settings
 from .db import Database
 
@@ -28,6 +27,7 @@ async def main() -> None:
     db = Database(settings.db_path)
     try:
         await db.connect()
+        await bootstrap(db, settings)
     except sqlite3.DatabaseError as e:
         await db.close()
         sys.exit(f"База {settings.db_path} не открывается ({e}). "
@@ -44,12 +44,7 @@ async def main() -> None:
         sys.exit("BOT_TOKEN неверный. Скопируйте токен заново из @BotFather → /mybots → API Token.")
 
     dp = build_dispatcher(db, settings)
-    await bot.set_my_commands([
-        BotCommand(command="book", description="Записаться"),
-        BotCommand(command="my", description="Мои записи"),
-        BotCommand(command="help", description="Контакты и вопросы"),
-        BotCommand(command="start", description="Перезапустить бота"),
-    ])
+    await set_profile(bot, settings)
     log.info("Started @%s | demo=%s | payments=%s | db=%s", me.username, settings.demo_mode,
              settings.payments_enabled, settings.db_path)
 

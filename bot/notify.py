@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -28,9 +29,11 @@ async def notify_owners(bot: Bot, settings: Settings, text: str, markup: InlineK
 async def notify_new_booking(bot: Bot, settings: Settings, b: Booking) -> None:
     kb = InlineKeyboardBuilder()
     kb.button(text="Открыть карточку", callback_data=AdmCb(action="card", arg=str(b.id)))
+    barber = f"✂️ {escape(b.barber_name)}\n" if b.barber_name else ""
     text = (
         f"🆕 <b>Новая запись #{b.id}</b>\n"
-        f"💈 {texts.service_title(b.service_code)}\n"
+        f"💈 {escape(texts.service_title(b.service_code))}\n"
+        f"{barber}"
         f"🗓 {texts.when(b, settings.schedule.tz)}\n"
         f"👤 {texts.client_line(b, hide=False)}\n"
         f"{texts.payment_line(b)}"

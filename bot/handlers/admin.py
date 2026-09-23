@@ -32,7 +32,6 @@ router = Router(name="admin")
 
 STATUS = {"confirmed": "подтверждена", "cancelled": "отменена", "expired": "не оплачена",
           "pending_payment": "ждёт оплату"}
-MENU_BUTTONS = {kb.BTN_BOOK, kb.BTN_MY, kb.BTN_PRICES, kb.BTN_CONTACTS, kb.BTN_ADMIN}
 DEMO_LOCKED = "🔒 В демо это действие выключено — оно затронуло бы других людей. У владельца работает."
 
 
@@ -68,16 +67,6 @@ def day_block(d: date, items: list[Booking], settings: Settings, viewer_id: int,
 LEGEND = "\n\n<i>💳 оплачено онлайн · ✅ клиент подтвердил · ⏳ ждёт оплату. Нажмите /bN, чтобы открыть запись.</i>"
 
 
-@router.message(Command("admin"))
-@router.message(F.text == kb.BTN_ADMIN)
-async def admin_entry(message: Message, can_admin: bool, is_owner: bool, state: FSMContext) -> None:
-    if not can_admin:
-        await message.answer("Эта команда доступна только владельцу.")
-        return
-    await state.clear()
-    await message.answer(header(is_owner), reply_markup=kb.admin_menu())
-
-
 @router.message(F.text.regexp(r"^/b(\d+)(@\w+)?$").as_("match"))
 async def booking_by_command(message: Message, match, db: Database, settings: Settings,
                              can_admin: bool, is_owner: bool) -> None:
@@ -111,7 +100,7 @@ async def card(booking_id: int, viewer_id: int, is_owner: bool, db: Database, se
 
 @router.message(BroadcastForm.text)
 async def broadcast_text(message: Message, state: FSMContext, db: Database, is_owner: bool) -> None:
-    if message.text and (message.text.startswith("/") or message.text in MENU_BUTTONS):
+    if message.text and message.text.startswith("/"):
         await state.clear()
         await message.answer("Рассылка отменена.")
         return

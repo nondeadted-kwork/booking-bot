@@ -322,14 +322,6 @@ class Database:
 
     # --- bookings: чтение ----------------------------------------------------
 
-    async def busy_intervals(self, start: int, end: int, now: int) -> list[tuple[int, int]]:
-        rows = await self._all(
-            f"SELECT b.start_at, b.end_at FROM bookings b "
-            f"WHERE {ACTIVE} AND b.start_at < :end AND b.end_at > :start",
-            {"now": now, "start": start, "end": end},
-        )
-        return [(r["start_at"], r["end_at"]) for r in rows]
-
     async def busy_by_barber(self, start: int, end: int, now: int) -> dict[int, list[Interval]]:
         """Занятое время каждого барбера в промежутке: id → [(начало, конец)], по времени."""
         rows = await self._all(

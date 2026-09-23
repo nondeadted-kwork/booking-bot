@@ -1,125 +1,52 @@
-"""Сквозной сценарий без реального Telegram: апдейты подаются в диспетчер,
-а все запросы к Bot API перехватывает FakeSession."""
+"""Сквозные сценарии без реального Telegram: запись с выбором барбера, оплата, панель, сбои."""
 from __future__ import annotations
 
-import itertools
-from collections.abc import AsyncGenerator
-from datetime import datetime
+import sqlite3
 
 import pytest
-from aiogram import Bot
-from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import (
     AnswerCallbackQuery,
     AnswerPreCheckoutQuery,
     EditMessageText,
     SendDocument,
     SendInvoice,
-    SendMessage,
-    TelegramMethod,
+    SetMyCommands,
+    SetMyDescription,
+    SetMyShortDescription,
 )
-from aiogram.types import (
-    CallbackQuery,
-    Chat,
-    Contact,
-    Message,
-    PreCheckoutQuery,
-    SuccessfulPayment,
-    Update,
-    User,
-)
+from aiogram.types import Contact, PreCheckoutQuery, SuccessfulPayment, User
 
+from bot import app, reminders
 from bot import keyboards as kb
-from bot import reminders
-from bot.app import build_dispatcher
-from bot.config import BarberSeed, Settings
-from bot.db import Database
-from bot.handlers import admin, client
-
-OWNER = 1000
-CLIENT = User(id=1, is_bot=False, first_name="Иван", username="ivan")
-OTHER = User(id=2, is_bot=False, first_name="Пётр")
-
-
-class FakeSession(BaseSession):
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[TelegramMethod] = []
-        self._ids = itertools.count(100)
-
-    async def make_request(self, bot, method, timeout=None):
-        self.calls.append(method)
-        if isinstance(method, (SendMessage, SendInvoice, SendDocument, EditMessageText)):
-            return Message(message_id=next(self._ids), date=datetime.now(),
-                           chat=Chat(id=method.chat_id or 0, type="private"),
-                           text=getattr(method, "text", None))
-        return True
-
-    async def close(self):
-        pass
-
-    async def stream_content(self, *args, **kwargs) -> AsyncGenerator[bytes, None]:
-        yield b""
-
-    def take(self) -> list[TelegramMethod]:
-        calls, self.calls = self.calls, []
-        return calls
-
-
-class Harness:
-    def __init__(self, settings: Settings, db: Database) -> None:
-        self.session = FakeSession()
-        self.bot = Bot("123456:TEST", session=self.session)
-        self.db = db
-        self.settings = settings
-        for router in (admin.router, client.router):  # роутеры — модульные синглтоны, отвязываем от прошлого теста
-            router._parent_router = None
-        self.dp = build_dispatcher(db, settings)
-        self._ids = itertools.count(1)
-
-    async def feed(self, **kwargs) -> list[TelegramMethod]:
-        await self.dp.feed_update(self.bot, Update(update_id=next(self._ids), **kwargs))
-        return self.session.take()
-
-    def message(self, user: User, text: str | None = None, **extra) -> dict:
-        return {"message": Message(message_id=next(self._ids), date=datetime.now(),
-                                   chat=Chat(id=user.id, type="private"), from_user=user, text=text, **extra)}
-
-    def callback(self, user: User, data: str) -> dict:
-        msg = Message(message_id=next(self._ids), date=datetime.now(), chat=Chat(id=user.id, type="private"),
-                      text="…")
-        return {"callback_query": CallbackQuery(id=str(next(self._ids)), from_user=user, chat_instance="ci",
-                                                message=msg, data=data)}
-
-
-def buttons(call: TelegramMethod) -> list[str]:
-    markup = call.reply_markup
-    return [b.callback_data for row in markup.inline_keyboard for b in row if b.callback_data]
-
-
-def first(call: TelegramMethod, prefix: str) -> str:
-    return next(d for d in buttons(call) if d.startswith(prefix + ":"))
-
-
-def texts_of(calls) -> str:
-    return "\n".join(getattr(c, "text", "") or "" for c in calls)
+from bot.config import SERVICES_BY_CODE
+from tests.harness import (
+    CLIENT,
+    ONE_BARBER,
+    OTHER,
+    OWNER,
+    Harness,
+    buttons,
+    first,
+    make_settings,
+    open_db,
+    sent_to,
+    texts_of,
+)
 
 
 @pytest.fixture
 async def db(tmp_path):
-    database = Database(str(tmp_path / "flow.db"))
-    await database.connect()
-    await database.ensure_barbers((BarberSeed("Мастер", "", frozenset(range(7))),))
+    database = await open_db(str(tmp_path / "flow.db"))
     yield database
     await database.close()
 
 
-def make_settings(**kw) -> Settings:
-    return Settings(bot_token="123456:TEST", owner_ids=frozenset({OWNER}), demo_mode=True, **kw)
+async def walk_to_confirm(h: Harness, user: User, barber: str = "first") -> str:
+    """/start → Записаться → услуга → барбер → день → время. Возвращает callback кнопки подтверждения.
 
-
-async def walk_to_confirm(h: Harness, user: User) -> str:
-    """/start → Записаться → услуга → день → время. Возвращает callback кнопки подтверждения."""
+    barber: first (первый в списке), any («Любой свободный»), skip (мастер один, шага выбора нет).
+    """
     calls = await h.feed(**h.message(user, "/start"))
     assert "Здравствуйте" in calls[0].text
 
@@ -128,6 +55,13 @@ async def walk_to_confirm(h: Harness, user: User) -> str:
 
     calls = await h.feed(**h.callback(user, service_cb))
     edit = next(c for c in calls if isinstance(c, EditMessageText))
+    if barber == "skip":
+        assert not any(d.startswith("brb:") for d in buttons(edit))
+    else:
+        assert "Выберите барбера" in edit.text
+        options = [d for d in buttons(edit) if d.startswith("brb:")]
+        calls = await h.feed(**h.callback(user, options[-1] if barber == "any" else options[0]))
+        edit = next(c for c in calls if isinstance(c, EditMessageText))
     day_cb = first(edit, "day")
 
     calls = await h.feed(**h.callback(user, day_cb))
@@ -144,21 +78,20 @@ async def test_full_booking_flow_with_phone_and_reminder(db):
     h = Harness(make_settings(), db)
     confirm_cb = await walk_to_confirm(h, CLIENT)
 
-    # Телефона ещё нет — бот его спрашивает
+    # Телефона ещё нет: бот его спрашивает
     calls = await h.feed(**h.callback(CLIENT, confirm_cb))
     assert "номер телефона" in texts_of(calls)
 
     contact = Contact(phone_number="+79001234567", first_name="Иван", user_id=CLIENT.id)
     calls = await h.feed(**h.message(CLIENT, contact=contact))
-    all_text = texts_of(calls)
-    assert "Вы записаны" in all_text
-    owner_msgs = [c for c in calls if isinstance(c, SendMessage) and c.chat_id == OWNER]
-    assert owner_msgs and "Новая запись" in owner_msgs[0].text and "+79001234567" in owner_msgs[0].text
+    assert "Вы записаны" in texts_of(calls) and "✂️ Артём" in texts_of(calls)
+    [to_owner] = sent_to(calls, OWNER)
+    assert "Новая запись" in to_owner.text and "+79001234567" in to_owner.text and "Артём" in to_owner.text
 
     [booking] = await db.user_upcoming(CLIENT.id, 0)
     assert booking.status == "confirmed"
 
-    # Второй клиент пытается взять то же время по старой кнопке
+    # Второй клиент пытается взять то же время у того же барбера по старой кнопке
     await db.upsert_user(OTHER.id, OTHER.first_name, None)
     await db.set_phone(OTHER.id, "")
     calls = await h.feed(**h.callback(OTHER, confirm_cb))
@@ -170,6 +103,69 @@ async def test_full_booking_flow_with_phone_and_reminder(db):
     assert len(sent) == 1 and "Напоминание" in sent[0].text and sent[0].chat_id == CLIENT.id
     await reminders.tick(h.bot, db, h.settings, now=booking.start_at - 29 * 60)
     assert h.session.take() == []
+
+
+async def test_any_barber_gets_a_concrete_barber(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT, barber="any")
+    assert kb.ConfirmCb.unpack(confirm_cb).m == 0
+    await db.set_phone(CLIENT.id, "")
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    [booking] = await db.user_upcoming(CLIENT.id, 0)
+    assert booking.barber_name in ("Артём", "Максим")
+    assert f"✂️ {booking.barber_name}" in texts_of(calls)
+
+
+async def test_any_barber_falls_back_to_second_when_first_is_taken(db):
+    """Оба свободны, первого занимают, пока клиент думает: запись достаётся второму."""
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT, barber="any")
+    data = kb.ConfirmCb.unpack(confirm_cb)
+    service = SERVICES_BY_CODE[data.code]
+    artem, maxim = await db.barbers()
+    await db.upsert_user(OTHER.id, OTHER.first_name, None)
+    await db.create_booking(user_id=OTHER.id, barber_id=artem.id, service_code=service.code, start_at=data.ts,
+                            end_at=data.ts + service.minutes * 60, price=service.price, now=data.ts - 7200)
+    await db.set_phone(CLIENT.id, "")
+    await h.feed(**h.callback(CLIENT, confirm_cb))
+    [booking] = await db.user_upcoming(CLIENT.id, 0)
+    assert booking.barber_id == maxim.id
+
+
+async def test_single_barber_skips_choice(tmp_path):
+    db = await open_db(str(tmp_path / "one.db"), ONE_BARBER)
+    try:
+        h = Harness(make_settings(), db)
+        confirm_cb = await walk_to_confirm(h, CLIENT, barber="skip")
+        await db.set_phone(CLIENT.id, "")
+        calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+        assert "Вы записаны" in texts_of(calls)
+    finally:
+        await db.close()
+
+
+async def test_hidden_barber_button_is_refused(db):
+    h = Harness(make_settings(), db)
+    await h.feed(**h.message(CLIENT, "/start"))
+    calls = await h.feed(**h.message(CLIENT, kb.BTN_BOOK))
+    calls = await h.feed(**h.callback(CLIENT, first(calls[0], "svc")))
+    artem_cb = first(next(c for c in calls if isinstance(c, EditMessageText)), "brb")
+    artem, _ = await db.barbers()
+    await db.update_barber(artem.id, active=False)
+    calls = await h.feed(**h.callback(CLIENT, artem_cb))
+    alert = next(c for c in calls if isinstance(c, AnswerCallbackQuery))
+    assert "больше не принимает" in alert.text
+
+
+async def test_menu_button_escapes_phone_form(db):
+    h = Harness(make_settings(), db)
+    confirm_cb = await walk_to_confirm(h, CLIENT)
+    calls = await h.feed(**h.callback(CLIENT, confirm_cb))
+    assert "номер телефона" in texts_of(calls)
+    calls = await h.feed(**h.message(CLIENT, kb.BTN_MY))
+    assert "нет предстоящих записей" in texts_of(calls)
+    calls = await h.feed(**h.message(CLIENT, "привет"))
+    assert "понимаю кнопки меню" in texts_of(calls)
 
 
 async def test_demo_admin_panel_masks_other_clients(db):
@@ -199,11 +195,11 @@ async def test_online_payment_flow(db):
     await db.upsert_user(CLIENT.id, CLIENT.first_name, CLIENT.username)
     await db.set_phone(CLIENT.id, "+79001234567")
     confirm_cb = await walk_to_confirm(h, CLIENT)
-    pay_cb = confirm_cb.replace(":0", ":1") if confirm_cb.endswith(":0") else confirm_cb
+    pay_cb = confirm_cb.rsplit(":", 1)[0] + ":1"
 
     calls = await h.feed(**h.callback(CLIENT, pay_cb))
     invoice = next(c for c in calls if isinstance(c, SendInvoice))
-    assert invoice.currency == "RUB" and invoice.prices[0].amount > 0
+    assert invoice.currency == "RUB" and invoice.prices[0].amount > 0 and "барбер Артём" in invoice.description
 
     query = PreCheckoutQuery(id="pc", from_user=CLIENT, currency="RUB",
                              total_amount=invoice.prices[0].amount, invoice_payload=invoice.payload)
@@ -243,9 +239,7 @@ async def test_garbage_callback_does_not_crash(db):
 
 
 async def test_database_failure_is_reported_to_client_and_owner(db, monkeypatch):
-    """«Уронили» базу посреди записи: клиент видит извинение, владелец — алерт, бот живёт дальше."""
-    import sqlite3
-
+    """«Уронили» базу посреди записи: клиент видит извинение, владелец алерт, бот живёт дальше."""
     h = Harness(make_settings(), db)
     confirm_cb = await walk_to_confirm(h, CLIENT)
     await db.set_phone(CLIENT.id, "")
@@ -255,10 +249,30 @@ async def test_database_failure_is_reported_to_client_and_owner(db, monkeypatch)
 
     monkeypatch.setattr(db, "create_booking", broken)
     calls = await h.feed(**h.callback(CLIENT, confirm_cb))
-    to_owner = [c for c in calls if isinstance(c, SendMessage) and c.chat_id == OWNER]
+    to_owner = sent_to(calls, OWNER)
     assert to_owner and "database is locked" in to_owner[0].text
     assert any(isinstance(c, AnswerCallbackQuery) and "пошло не так" in (c.text or "") for c in calls)
 
-    monkeypatch.undo()  # база «ожила» — следующая попытка проходит
+    monkeypatch.undo()  # база «ожила»: следующая попытка проходит
     calls = await h.feed(**h.callback(CLIENT, confirm_cb))
     assert "Вы записаны" in texts_of(calls)
+
+
+async def test_bot_profile_is_set_on_start(db):
+    h = Harness(make_settings(), db)
+    await app.set_profile(h.bot, h.settings)
+    calls = h.session.take()
+    description = next(c for c in calls if isinstance(c, SetMyDescription))
+    assert "Демо бота записи" in description.description
+    assert any(isinstance(c, SetMyShortDescription) for c in calls)
+    assert any(isinstance(c, SetMyCommands) for c in calls)
+
+
+async def test_bot_profile_failure_does_not_stop_start(db):
+    h = Harness(make_settings(), db)
+
+    async def refuse(bot, method, timeout=None):
+        raise TelegramBadRequest(method=method, message="Bad Request: description is too long")
+
+    h.session.make_request = refuse
+    await app.set_profile(h.bot, h.settings)  # не падает, только пишет предупреждение в лог

@@ -1,4 +1,4 @@
-"""Сборка диспетчера: middleware, роутеры, глобальный обработчик ошибок."""
+"""Сборка диспетчера: middleware, порядок роутеров, обработчик ошибок, первый запуск и профиль бота."""
 from __future__ import annotations
 
 import logging
@@ -8,16 +8,28 @@ from html import escape
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ErrorEvent, TelegramObject
+from aiogram.types import BotCommand, ErrorEvent, TelegramObject
 from aiogram.types import User as TgUser
 
-from .config import Settings
+from . import texts
+from .config import DEFAULT_BARBER_NAME, DEMO_BARBERS, BarberSeed, Settings
 from .db import Database
-from .handlers import admin, client
+from .handlers import admin, booking, client, fallback
 from .notify import notify_owners
 
 log = logging.getLogger(__name__)
+
+# Порядок важен: кнопки меню (client) раньше любых форм, ловушки (fallback) последними.
+ROUTERS = (client.router, admin.router, booking.router, fallback.router)
+
+COMMANDS = [
+    BotCommand(command="book", description="Записаться"),
+    BotCommand(command="my", description="Мои записи"),
+    BotCommand(command="help", description="Контакты и вопросы"),
+    BotCommand(command="start", description="Перезапустить бота"),
+]
 
 
 class UserMiddleware(BaseMiddleware):
@@ -56,18 +68,18 @@ async def on_error(event: ErrorEvent, bot: Bot, settings: Settings) -> bool:
         if update.callback_query:
             await update.callback_query.answer("⚠️ Что-то пошло не так. Попробуйте ещё раз.", show_alert=True)
         elif update.message:
-            await update.message.answer("⚠️ Что-то пошло не так. Мы уже разбираемся — попробуйте через минуту.")
-    except Exception:  # noqa: BLE001 — если Telegram недоступен, просто молчим
+            await update.message.answer("⚠️ Что-то пошло не так. Мы уже разбираемся, попробуйте через минуту.")
+    except Exception:  # noqa: BLE001 (если Telegram недоступен, просто молчим)
         pass
 
-    # Одна и та же ошибка — не чаще раза в 5 минут, чтобы не заспамить владельца.
+    # Одна и та же ошибка не чаще раза в 5 минут, чтобы не заспамить владельца.
     key = type(exc).__name__
     if time.monotonic() - _last_alert.get(key, -1e9) > 300:
         _last_alert[key] = time.monotonic()
         await notify_owners(
             bot, settings,
             f"🔥 <b>Ошибка в боте</b>\n<code>{escape(repr(exc))[:600]}</code>\n"
-            f"update_id={update.update_id}. Полный traceback — в логах: <code>docker compose logs bot</code>",
+            f"update_id={update.update_id}. Полный traceback в логах: <code>docker compose logs bot</code>",
         )
     return True
 
@@ -78,6 +90,24 @@ def build_dispatcher(db: Database, settings: Settings) -> Dispatcher:
     dp["settings"] = settings
     dp.update.outer_middleware(UserMiddleware(db, settings))
     dp.errors.register(on_error)
-    # admin раньше client: у client в конце стоят «ловушки» для всех остальных сообщений.
-    dp.include_routers(admin.router, client.router)
+    dp.include_routers(*ROUTERS)
     return dp
+
+
+async def bootstrap(db: Database, settings: Settings) -> None:
+    """Первый запуск: барберы по умолчанию. В демо три барбера, без демо один мастер на графике салона."""
+    if settings.demo_mode:
+        seeds = DEMO_BARBERS
+    else:
+        seeds = (BarberSeed(DEFAULT_BARBER_NAME, "", settings.schedule.workdays),)
+    await db.ensure_barbers(seeds)
+
+
+async def set_profile(bot: Bot, settings: Settings) -> None:
+    """Описание в пустом чате до «Старт», короткое описание и меню команд. Сбой Telegram не мешает старту."""
+    try:
+        await bot.set_my_description(description=texts.bot_description(settings))
+        await bot.set_my_short_description(short_description=texts.bot_short_description(settings))
+        await bot.set_my_commands(COMMANDS)
+    except TelegramAPIError as e:
+        log.warning("Не удалось обновить описание бота: %s", e)

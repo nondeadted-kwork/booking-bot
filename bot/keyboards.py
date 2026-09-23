@@ -1,6 +1,6 @@
 """Клавиатуры и callback-данные.
 
-Весь путь записи (услуга → день → время) живёт в callback_data, а не в памяти бота.
+Весь путь записи (услуга → барбер → день → время) живёт в callback_data, а не в памяти бота.
 Поэтому кнопки продолжают работать после перезапуска.
 """
 from __future__ import annotations
@@ -19,18 +19,26 @@ class ServiceCb(CallbackData, prefix="svc"):
     code: str
 
 
+class BarberCb(CallbackData, prefix="brb"):
+    code: str
+    m: int  # id барбера; 0 (slots.ANY) = любой свободный
+
+
 class DayCb(CallbackData, prefix="day"):
     code: str
+    m: int
     day: str  # YYYYMMDD
 
 
 class SlotCb(CallbackData, prefix="slot"):
     code: str
+    m: int
     ts: int
 
 
 class ConfirmCb(CallbackData, prefix="ok"):
     code: str
+    m: int
     ts: int
     pay: bool
 
@@ -38,6 +46,7 @@ class ConfirmCb(CallbackData, prefix="ok"):
 class BackCb(CallbackData, prefix="back"):
     to: str  # services | days
     code: str = ""
+    m: int = 0
 
 
 class MyCb(CallbackData, prefix="my"):
@@ -90,41 +99,58 @@ def services() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def days(service: Service, options: list[tuple[date, int, bool]]) -> InlineKeyboardMarkup:
-    """options: (день, свободных окон, выходной)."""
+def barber_choice(service: Service, rows: list[tuple[int, str, bool]]) -> InlineKeyboardMarkup:
+    """rows: (id барбера или ANY, подпись, есть ли окна на неделе). Без окон кнопка неактивна."""
     kb = InlineKeyboardBuilder()
-    for d, free, closed in options:
+    for barber_id, label, available in rows:
+        callback = BarberCb(code=service.code, m=barber_id) if available else NoopCb(reason="nofree")
+        kb.button(text=label, callback_data=callback)
+    kb.button(text="« К услугам", callback_data=BackCb(to="services"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def days(service: Service, m: int, options: list[tuple[date, int, str]], to_barbers: bool) -> InlineKeyboardMarkup:
+    """options: (день, свободных окон, статус open | closed | off). to_barbers: назад к выбору барбера."""
+    kb = InlineKeyboardBuilder()
+    for d, free, status in options:
         label = texts.day_short(d)
-        if closed:
+        if status == "closed":
             kb.button(text=f"{label} · выходной", callback_data=NoopCb(reason="closed"))
+        elif status == "off":
+            kb.button(text=f"{label} · отпуск", callback_data=NoopCb(reason="off"))
         elif free == 0:
             kb.button(text=f"{label} · мест нет", callback_data=NoopCb(reason="full"))
         else:
             kb.button(text=f"{label} · {texts.plural(free, 'окно', 'окна', 'окон')}",
-                      callback_data=DayCb(code=service.code, day=f"{d:%Y%m%d}"))
-    kb.button(text="« К услугам", callback_data=BackCb(to="services"))
+                      callback_data=DayCb(code=service.code, m=m, day=f"{d:%Y%m%d}"))
+    if to_barbers:
+        kb.button(text="« Другой барбер", callback_data=ServiceCb(code=service.code))
+    else:
+        kb.button(text="« К услугам", callback_data=BackCb(to="services"))
     kb.adjust(*([2] * ((len(options) + 1) // 2)), 1)
     return kb.as_markup()
 
 
-def slots(service: Service, free: list[datetime]) -> InlineKeyboardMarkup:
+def slots(service: Service, m: int, free: list[datetime]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for t in free:
-        kb.button(text=f"{t:%H:%M}", callback_data=SlotCb(code=service.code, ts=int(t.timestamp())))
-    kb.button(text="« Другой день", callback_data=BackCb(to="days", code=service.code))
+        kb.button(text=f"{t:%H:%M}", callback_data=SlotCb(code=service.code, m=m, ts=int(t.timestamp())))
+    kb.button(text="« Другой день", callback_data=BackCb(to="days", code=service.code, m=m))
     kb.adjust(*([4] * ((len(free) + 3) // 4)), 1)
     return kb.as_markup()
 
 
-def confirm(service: Service, ts: int, payments: bool) -> InlineKeyboardMarkup:
+def confirm(service: Service, m: int, ts: int, payments: bool) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     if payments:
         kb.button(text=f"💳 Оплатить онлайн {texts.price(service.price)}",
-                  callback_data=ConfirmCb(code=service.code, ts=ts, pay=True))
-        kb.button(text="✅ Записаться, оплачу на месте", callback_data=ConfirmCb(code=service.code, ts=ts, pay=False))
+                  callback_data=ConfirmCb(code=service.code, m=m, ts=ts, pay=True))
+        kb.button(text="✅ Записаться, оплачу на месте",
+                  callback_data=ConfirmCb(code=service.code, m=m, ts=ts, pay=False))
     else:
-        kb.button(text="✅ Подтвердить запись", callback_data=ConfirmCb(code=service.code, ts=ts, pay=False))
-    kb.button(text="« Другое время", callback_data=BackCb(to="days", code=service.code))
+        kb.button(text="✅ Подтвердить запись", callback_data=ConfirmCb(code=service.code, m=m, ts=ts, pay=False))
+    kb.button(text="« Другое время", callback_data=BackCb(to="days", code=service.code, m=m))
     kb.adjust(1)
     return kb.as_markup()
 
