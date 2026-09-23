@@ -267,3 +267,87 @@ def broadcast_confirm(recipients: int) -> InlineKeyboardMarkup:
     kb.button(text="Отмена", callback_data=AdmCb(action="menu"))
     kb.adjust(1)
     return kb.as_markup()
+
+
+# --- барберы в панели ----------------------------------------------------------
+
+def barber_list(barbers: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for barber_id, label in barbers:
+        kb.button(text=label, callback_data=BarbCb(action="card", id=barber_id))
+    kb.button(text="➕ Добавить барбера", callback_data=BarbCb(action="new"))
+    kb.button(text="« Панель", callback_data=AdmCb(action="menu"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def barber_card(barber_id: int, active: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✏️ Имя", callback_data=BarbCb(action="name", id=barber_id))
+    kb.button(text="✏️ Описание", callback_data=BarbCb(action="about", id=barber_id))
+    kb.button(text="📅 Рабочие дни", callback_data=BarbCb(action="days", id=barber_id))
+    kb.button(text="🌴 Отпуск", callback_data=BarbCb(action="off", id=barber_id))
+    if active:
+        kb.button(text="🙈 Скрыть из записи", callback_data=BarbCb(action="hide", id=barber_id))
+    else:
+        kb.button(text="👁 Вернуть в запись", callback_data=BarbCb(action="show", id=barber_id))
+    kb.button(text="« Барберы", callback_data=BarbCb(action="list"))
+    kb.adjust(2, 2, 1, 1)
+    return kb.as_markup()
+
+
+def weekday_toggles(selected: frozenset[int], action: str, barber_id: int, done: BarbCb) -> InlineKeyboardMarkup:
+    """Переключатели пн-вс. action: day (у существующего барбера) или nday (у нового)."""
+    kb = InlineKeyboardBuilder()
+    for wd, name in enumerate(texts.WEEKDAYS):
+        mark = "✅" if wd in selected else "▫️"
+        kb.button(text=f"{mark} {name}", callback_data=BarbCb(action=action, id=barber_id, arg=str(wd)))
+    kb.button(text="Готово", callback_data=done)
+    kb.adjust(4, 3, 1)
+    return kb.as_markup()
+
+
+def days_off_toggles(barber_id: int, options: list[tuple[date, bool]]) -> InlineKeyboardMarkup:
+    """options: (дата, отпуск ли)."""
+    kb = InlineKeyboardBuilder()
+    for d, off in options:
+        mark = "🌴" if off else "✅"
+        kb.button(text=f"{mark} {texts.day_short(d)}",
+                  callback_data=BarbCb(action="offday", id=barber_id, arg=f"{d:%Y-%m-%d}"))
+    kb.button(text="Готово", callback_data=BarbCb(action="card", id=barber_id))
+    kb.adjust(*([3] * ((len(options) + 2) // 3)), 1)
+    return kb.as_markup()
+
+
+def barber_cancel() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Отмена", callback_data=BarbCb(action="list"))
+    return kb.as_markup()
+
+
+def barber_skip_about() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Пропустить", callback_data=BarbCb(action="skip"))
+    kb.button(text="Отмена", callback_data=BarbCb(action="list"))
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def barber_save() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💾 Сохранить", callback_data=BarbCb(action="save"))
+    kb.button(text="Отмена", callback_data=BarbCb(action="list"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def barber_back(barber_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="« Назад", callback_data=BarbCb(action="card", id=barber_id))
+    return kb.as_markup()
+
+
+def barber_list_back() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="« Барберы", callback_data=BarbCb(action="list"))
+    return kb.as_markup()
