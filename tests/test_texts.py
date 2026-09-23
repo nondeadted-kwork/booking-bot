@@ -1,0 +1,53 @@
+"""Форматирование: дни недели, ближайшее время, карточка записи, описание бота."""
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from bot import texts
+from bot.config import Settings
+from bot.db import Booking
+
+MSK = ZoneInfo("Europe/Moscow")
+
+
+def sample_booking(**kw) -> Booking:
+    start = int(datetime(2026, 9, 24, 10, 0, tzinfo=MSK).timestamp())
+    data = dict(id=7, user_id=1, barber_id=1, service_code="cut", start_at=start, end_at=start + 3600, price=1500,
+                status="confirmed", paid=0, hold_until=None, reminded_at=None, client_confirmed=False,
+                cancelled_by=None, created_at=start - 86400, first_name="Иван", username="ivan", phone="+7900",
+                barber_name="Артём")
+    data.update(kw)
+    return Booking(**data)
+
+
+def test_days_span():
+    assert texts.days_span({0, 1, 2, 3, 4}) == "пн-пт"
+    assert texts.days_span({0, 1, 4, 5, 6}) == "пн, вт, пт-вс"
+    assert texts.days_span(range(7)) == "ежедневно"
+    assert texts.days_span({2}) == "ср"
+    assert texts.days_span(set()) == "нет рабочих дней"
+
+
+def test_nearest_labels():
+    today = date(2026, 9, 23)
+    assert texts.nearest(datetime(2026, 9, 23, 15, 30), today) == "сегодня 15:30"
+    assert texts.nearest(datetime(2026, 9, 24, 10, 0), today) == "завтра 10:00"
+    assert texts.nearest(datetime(2026, 9, 25, 11, 0), today) == "пт 11:00"
+
+
+def test_booking_card_shows_barber_and_uses_hyphen():
+    card = texts.booking_card(sample_booking(), MSK, "Москва")
+    assert "✂️ Артём" in card and "10:00-11:00" in card
+    assert "✂️" not in texts.booking_card(sample_booking(barber_name=None), MSK, "Москва")
+
+
+def test_payment_line_without_dash():
+    assert texts.payment_line(sample_booking()) == "💰 1 500 ₽, оплата на месте"
+
+
+def test_bot_descriptions_fit_telegram_limits():
+    for demo_mode in (True, False):
+        settings = Settings(bot_token="1:T", owner_ids=frozenset(), demo_mode=demo_mode, business_name="Б" * 600)
+        assert len(texts.bot_description(settings)) <= 512
+        assert len(texts.bot_short_description(settings)) <= 120
+    demo = Settings(bot_token="1:T", owner_ids=frozenset(), demo_mode=True)
+    assert "Демо бота записи" in texts.bot_description(demo)
