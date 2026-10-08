@@ -2,7 +2,7 @@
 
 **RU** · [EN below](#english)
 
-> Живое демо: **@lezvie_barber_demo_bot** · видео 40 сек: [ссылка] · записаться можно прямо сейчас, оплата тестовая
+> Живое демо: **[@lezvie_barber_demo_bot](https://t.me/lezvie_barber_demo_bot)** · записаться можно прямо сейчас, оплата тестовая
 
 ![Скриншот](docs/screenshot.png)
 
